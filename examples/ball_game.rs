@@ -1,16 +1,33 @@
+use std::time::Duration;
+
 use bevy::prelude::*;
+use bevy::time::Stopwatch;
 use bevy::window::PrimaryWindow;
+use bevy_training::health_bar::{HealthBar, HealthBarPlugin};
 use rand::prelude::*;
 
 pub const PLAYER_SPEED: f32 = 500.0;
 pub const PLAYER_SIZE: f32 = 64.0;
+
 pub const PLAYER_ENEMY: usize = 4;
+pub const ENEMY_SPEED: f32 = 200.0;
+pub const ENEMY_SIZE: f32 = 64.0;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugins(HealthBarPlugin)
         .add_systems(Startup, (spawn_player, spawn_camera, spawn_enemy))
-        .add_systems(Update, (player_movement, bound_player_movement))
+        .add_systems(
+            Update,
+            (
+                player_movement,
+                bound_player_movement,
+                enemy_movement,
+                bound_enemy_movement,
+                enemy_hit_player,
+            ),
+        )
         .run();
 }
 
@@ -18,7 +35,12 @@ fn main() {
 pub struct Player;
 
 #[derive(Component)]
-pub struct Enemy;
+pub struct Enemy {
+    direction: Vec2,
+}
+
+#[derive(Default, Component)]
+pub struct DamageTimer(Stopwatch);
 
 pub fn spawn_player(
     mut commands: Commands,
@@ -27,8 +49,8 @@ pub fn spawn_player(
 ) {
     let window = window_query.get_single().unwrap();
 
-    commands.spawn((
-        SpriteBundle {
+    commands
+        .spawn(SpriteBundle {
             transform: Transform::from_translation(Vec3::new(
                 window.width() / 2.0,
                 window.height() / 2.0,
@@ -36,9 +58,13 @@ pub fn spawn_player(
             )),
             texture: asset_server.load("sprites/ball_red_large.png"),
             ..Default::default()
-        },
-        Player,
-    ));
+        })
+        .insert(Player)
+        .insert(HealthBar {
+            max_health: 200.,
+            health: 200.,
+        })
+        .insert(DamageTimer::default());
 }
 
 pub fn spawn_camera(mut commands: Commands, window_query: Query<&Window, With<PrimaryWindow>>) {
@@ -65,14 +91,21 @@ pub fn spawn_enemy(
         let rand_x = random::<f32>() * window.width();
         let rand_y = random::<f32>() * window.height();
 
-        commands.spawn((
-            SpriteBundle {
-                transform: Transform::from_translation(Vec3::new(rand_x, rand_y, 0.0)),
-                texture: asset_server.load("sprites/ball_blue_large.png"),
-                ..Default::default()
-            },
-            Enemy,
-        ));
+        commands
+            .spawn((
+                SpriteBundle {
+                    transform: Transform::from_translation(Vec3::new(rand_x, rand_y, 0.0)),
+                    texture: asset_server.load("sprites/ball_blue_large.png"),
+                    ..Default::default()
+                },
+                Enemy {
+                    direction: Vec2::new(random::<f32>() - 0.5, random::<f32>() - 0.5).normalize(),
+                },
+            ))
+            .insert(HealthBar {
+                max_health: 50.,
+                health: 50.,
+            });
     }
 }
 
@@ -129,6 +162,105 @@ pub fn bound_player_movement(
             transform.translation.y = y_min;
         } else if transform.translation.y > y_max {
             transform.translation.y = y_max;
+        }
+    }
+}
+
+pub fn enemy_movement(mut query: Query<(&mut Transform, &Enemy)>, time: Res<Time>) {
+    for (mut transform, enemy) in query.iter_mut() {
+        let direction = Vec3::new(enemy.direction.x, enemy.direction.y, 0.0);
+        transform.translation += direction * ENEMY_SPEED * time.delta_seconds();
+    }
+}
+
+pub fn bound_enemy_movement(
+    mut commands: Commands,
+    mut query: Query<(&mut Transform, &mut Enemy)>,
+    window_query: Query<&Window, With<PrimaryWindow>>,
+    asset_server: Res<AssetServer>,
+) {
+    for (mut transform, mut enemy) in query.iter_mut() {
+        let window = window_query.get_single().unwrap();
+
+        let half_size = ENEMY_SIZE / 2.0;
+        let x_min = half_size;
+        let x_max = window.width() - half_size;
+        let y_min = half_size;
+        let y_max = window.height() - half_size;
+        let mut direction_changed = false;
+
+        if transform.translation.x < x_min {
+            transform.translation.x = x_min;
+        } else if transform.translation.x > x_max {
+            transform.translation.x = x_max;
+        }
+
+        if transform.translation.y < y_min {
+            transform.translation.y = y_min;
+        } else if transform.translation.y > y_max {
+            transform.translation.y = y_max;
+        }
+
+        if transform.translation.y <= y_min || transform.translation.y >= y_max {
+            enemy.direction.y *= -1.0;
+            direction_changed = true;
+        }
+
+        if transform.translation.x <= x_min || transform.translation.x >= x_max {
+            enemy.direction.x *= -1.0;
+            direction_changed = true;
+        }
+
+        if direction_changed {
+            if random::<f32>() > 0.5 {
+                commands.spawn(AudioBundle {
+                    source: asset_server.load("audio/pluck_001.ogg"),
+                    ..default()
+                });
+            } else {
+                commands.spawn(AudioBundle {
+                    source: asset_server.load("audio/pluck_002.ogg"),
+                    ..default()
+                });
+            }
+        }
+    }
+}
+
+pub fn enemy_hit_player(
+    mut commands: Commands,
+    mut player_query: Query<(Entity, &Transform, &mut HealthBar, &mut DamageTimer), With<Player>>,
+    enemy_query: Query<&Transform, With<Enemy>>,
+    asset_server: Res<AssetServer>,
+    time: Res<Time>,
+) {
+    if let Ok((s, player_transform, mut health_bar, mut damage_timer)) =
+        player_query.get_single_mut()
+    {
+        for enemy in enemy_query.iter() {
+            let distance = player_transform.translation.distance(enemy.translation);
+
+            damage_timer.0.tick(time.delta());
+
+            // println!("stopwatch: {:?}", damage_timer.0.elapsed_secs());
+
+            if damage_timer.0.elapsed_secs() >= 1.0
+                && distance < PLAYER_SIZE / 2.0 + ENEMY_SIZE / 2.0
+            {
+                health_bar.health -= 10.0;
+
+                damage_timer.0.reset();
+
+                println!("Player health: {}", health_bar.health);
+
+                if health_bar.health <= 0.0 {
+                    // commands.entity(player_entity).despawn();
+                    commands.spawn(AudioBundle {
+                        source: asset_server.load("audio/explosionCrunch_000.ogg"),
+                        ..default()
+                    });
+                }
+            }
         }
     }
 }
