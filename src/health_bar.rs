@@ -9,13 +9,14 @@ pub struct HealthBar {
 }
 
 #[derive(Component)]
-pub struct HealthBarFlag;
+pub struct HealthBarSprite;
 
 pub struct HealthBarPlugin;
 
 impl Plugin for HealthBarPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (spawn, update_health_bar));
+        app.add_systems(PostStartup, spawn);
+        app.add_systems(Update, update_health_bar);
     }
 }
 
@@ -34,23 +35,23 @@ fn spawn(mut commands: Commands, query: Query<(Entity, &HealthBar), With<HealthB
                 },
                 ..default()
             })
-            .insert(HealthBarFlag)
+            .insert(HealthBarSprite)
             .id();
 
         commands.entity(entity).push_children(&[children]);
-        // println!("Spawned health bar for entity {:?}", entity);
     }
 }
 
 fn update_health_bar(
-    health_bar_query: Query<(Entity, &HealthBar), With<HealthBar>>,
-    mut transform_query: Query<&mut Transform, With<HealthBarFlag>>,
+    mut commands: Commands,
+    mut query: Query<(&Parent, &mut Transform), With<HealthBarSprite>>,
+    health_bar_query: Query<&HealthBar>,
 ) {
-    // println!("Updating health bar");
+    for (parent, mut transform) in query.iter_mut() {
+        let entity = parent.get();
 
-    for (_entity, health_bar) in health_bar_query.iter() {
-        for mut transform in transform_query.iter_mut() {
-            transform.scale.x = health_bar.health;
+        if let Ok(health_bar) = health_bar_query.get(entity) {
+            transform.scale = Vec3::new(health_bar.health, 5., 1.);
         }
     }
 }

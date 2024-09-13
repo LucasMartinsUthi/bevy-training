@@ -1,12 +1,9 @@
 use bevy::prelude::*;
+use bevy::time::Stopwatch;
 use bevy::window::PrimaryWindow;
 use bevy_editor_pls::prelude::*;
 use bevy_kira_audio::prelude::*;
-use bevy_training::{
-    health_bar::{HealthBar, HealthBarPlugin},
-    weapon::{Weapon, WeaponPlugin},
-    DamageTimer, Enemy, Player,
-};
+use bevy_training::health_bar::{HealthBar, HealthBarPlugin};
 use rand::prelude::*;
 
 pub const PLAYER_SPEED: f32 = 500.0;
@@ -21,7 +18,6 @@ fn main() {
         .add_plugins((DefaultPlugins, AudioPlugin))
         .add_plugins(EditorPlugin::default())
         .add_plugins(HealthBarPlugin)
-        .add_plugins(WeaponPlugin)
         .add_systems(Startup, (spawn_player, spawn_camera, spawn_enemy))
         .add_systems(
             Update,
@@ -35,6 +31,17 @@ fn main() {
         )
         .run();
 }
+
+#[derive(Component)]
+pub struct Player;
+
+#[derive(Component)]
+pub struct Enemy {
+    direction: Vec2,
+}
+
+#[derive(Default, Component)]
+pub struct DamageTimer(Stopwatch);
 
 pub fn spawn_player(
     mut commands: Commands,
@@ -58,11 +65,7 @@ pub fn spawn_player(
             max_health: 200.,
             health: 200.,
         })
-        .insert(DamageTimer::default())
-        .insert(Weapon {
-            damage: 10.0,
-            rotation_speed: 2.0,
-        });
+        .insert(DamageTimer::default());
 }
 
 pub fn spawn_camera(mut commands: Commands, window_query: Query<&Window, With<PrimaryWindow>>) {
@@ -101,8 +104,7 @@ pub fn spawn_enemy(
             .insert(HealthBar {
                 max_health: 50.,
                 health: 50.,
-            })
-            .insert(DamageTimer::default());
+            });
     }
 }
 

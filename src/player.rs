@@ -1,11 +1,10 @@
-use crate::health_bar::HealthBarPlugin;
+use crate::health_bar::HealthBar;
 use bevy::prelude::*;
 
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(HealthBarPlugin);
         app.add_systems(Startup, setup);
         app.add_systems(Update, (movement,));
     }
@@ -19,8 +18,8 @@ pub struct Player {
 }
 
 fn setup(mut commands: Commands) {
-    commands.spawn((
-        SpriteBundle {
+    commands
+        .spawn(SpriteBundle {
             transform: Transform {
                 translation: Vec3::new(0., 0., 0.),
                 scale: Vec3::new(10., 10., 1.),
@@ -31,13 +30,16 @@ fn setup(mut commands: Commands) {
                 ..default()
             },
             ..default()
-        },
-        Player {
+        })
+        .insert(Player {
             health: 100,
             x: 0.,
             y: 0.,
-        },
-    ));
+        })
+        .insert(HealthBar {
+            max_health: 100.,
+            health: 100.,
+        });
 }
 
 fn movement(

@@ -1,5 +1,7 @@
 use bevy::prelude::*;
-use bevy_training::player::PlayerPlugin;
+use bevy_editor_pls::prelude::*;
+use bevy_training::health_bar::HealthBarPlugin;
+// use bevy_training::player::PlayerPlugin;
 use bevy_training::Game;
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, Default, States)]
@@ -12,8 +14,13 @@ enum GameState {
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
-        .add_plugins(PlayerPlugin)
+        .add_plugins(DefaultPlugins.set(AssetPlugin {
+            watch_for_changes_override: Some(true),
+            ..Default::default()
+        }))
+        .add_plugins(EditorPlugin::default())
+        // .add_plugins(PlayerPlugin)
+        .add_plugins(HealthBarPlugin)
         .init_resource::<Game>()
         // .init_state::<GameState>()
         .add_systems(Startup, (setup_cameras, setup))
