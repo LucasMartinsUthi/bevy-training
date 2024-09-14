@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_editor_pls::prelude::*;
 use bevy_kira_audio::prelude::*;
+use bevy_rapier2d::prelude::*;
 use bevy_training::{
     health_bar::{HealthBar, HealthBarPlugin},
     weapon::{Weapon, WeaponPlugin},
@@ -18,7 +19,12 @@ pub const ENEMY_SIZE: f32 = 64.0;
 
 fn main() {
     App::new()
-        .add_plugins((DefaultPlugins, AudioPlugin))
+        .add_plugins((
+            DefaultPlugins,
+            AudioPlugin,
+            RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0),
+            RapierDebugRenderPlugin::default(),
+        ))
         .add_plugins(EditorPlugin::default())
         .add_plugins(HealthBarPlugin)
         .add_plugins(WeaponPlugin)
@@ -33,6 +39,7 @@ fn main() {
                 enemy_hit_player,
             ),
         )
+        .add_systems(PostUpdate, despawn_enemys)
         .run();
 }
 
@@ -61,7 +68,8 @@ pub fn spawn_player(
         .insert(DamageTimer::default())
         .insert(Weapon {
             damage: 10.0,
-            rotation_speed: 2.0,
+            rotation_speed: 5.0,
+            ..Default::default()
         });
 }
 
@@ -102,7 +110,11 @@ pub fn spawn_enemy(
                 max_health: 50.,
                 health: 50.,
             })
-            .insert(DamageTimer::default());
+            .insert(DamageTimer::default())
+            .insert(Collider::ball(32.))
+            .insert(RigidBody::Fixed)
+            .insert(Sensor)
+            .insert(ActiveEvents::COLLISION_EVENTS);
     }
 }
 
@@ -253,6 +265,20 @@ pub fn enemy_hit_player(
                     });
                 }
             }
+        }
+    }
+}
+
+fn despawn_enemys(
+    mut commands: Commands,
+    query: Query<(Entity, &HealthBar), With<Enemy>>,
+    asset_server: Res<AssetServer>,
+    audio: Res<Audio>,
+) {
+    for (entity, health_bar) in query.iter() {
+        if health_bar.health <= 0.0 {
+            commands.entity(entity).despawn_recursive();
+            audio.play(asset_server.load("audio/explosionCrunch_000.ogg"));
         }
     }
 }

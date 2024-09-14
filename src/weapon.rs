@@ -1,11 +1,32 @@
-use crate::{health_bar::HealthBar, DamageTimer, Enemy};
-use bevy::prelude::*;
+use crate::{
+    health_bar::{self, HealthBar},
+    DamageTimer, Enemy,
+};
+use bevy::{
+    math::bounding::{Aabb2d, BoundingVolume, IntersectsVolume},
+    prelude::*,
+    render::primitives::Aabb,
+    transform::commands,
+};
 use bevy_kira_audio::prelude::*;
+use bevy_rapier2d::prelude::*;
+
+#[derive(Default)]
+enum RotationDirection {
+    #[default]
+    Clockwise,
+    CounterClockwise,
+}
+
+#[derive(Default, Component)]
+struct WeaponDebug;
 
 #[derive(Default, Component)]
 pub struct Weapon {
     pub damage: f32,
     pub rotation_speed: f32,
+    pub current_rotation: f32,
+    pub rotation_direction: RotationDirection,
 }
 
 #[derive(Component)]
@@ -16,7 +37,10 @@ pub struct WeaponPlugin;
 impl Plugin for WeaponPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(PostStartup, spawn);
-        app.add_systems(Update, (orbit, weapon_hit_enemy));
+        app.add_systems(PreUpdate, change_direction);
+        app.add_systems(Update, (orbit, display_events, weapon_hit_enemy));
+        // app.add_systems(PostUpdate, (debug_weapon));
+        // app.add_systems(PreUpdate, (despawn_debug));
     }
 }
 
@@ -26,16 +50,20 @@ fn spawn(mut commands: Commands, query: Query<(Entity, &Weapon), With<Weapon>>) 
             .spawn(SpriteBundle {
                 transform: Transform {
                     translation: Vec3::new(0., 120., 1.),
-                    scale: Vec3::new(8., 120., 1.),
                     ..default()
                 },
                 sprite: Sprite {
                     color: Color::srgb(0.1, 0.1, 0.1),
+                    custom_size: Some(Vec2::new(8.0, 120.0)),
                     ..default()
                 },
                 ..default()
             })
             .insert(WeaponSprite)
+            .insert(Collider::cuboid(4., 60.))
+            .insert(Sensor)
+            .insert(RigidBody::Fixed)
+            .insert(ActiveEvents::COLLISION_EVENTS)
             .id();
 
         commands.entity(entity).push_children(&[children]);
@@ -44,51 +72,84 @@ fn spawn(mut commands: Commands, query: Query<(Entity, &Weapon), With<Weapon>>) 
 
 fn orbit(
     mut query: Query<(&Parent, &mut Transform), With<WeaponSprite>>,
-    weapon_query: Query<&Weapon>,
+    mut weapon_query: Query<&mut Weapon>,
     time: Res<Time>,
 ) {
     for (parent, mut transform) in query.iter_mut() {
         let entity = parent.get();
 
-        if let Ok(weapon) = weapon_query.get(entity) {
-            //sprite must orbit around the parent entity
-            let rotation = Quat::from_rotation_z(time.delta_seconds() * weapon.rotation_speed);
+        if let Ok(mut weapon) = weapon_query.get_mut(entity) {
+            let speed = match weapon.rotation_direction {
+                RotationDirection::Clockwise => weapon.rotation_speed,
+                RotationDirection::CounterClockwise => -weapon.rotation_speed,
+            };
+
+            let rotation = Quat::from_rotation_z(time.delta_seconds() * speed);
             transform.translation = rotation.mul_vec3(transform.translation);
             transform.rotate(rotation);
+
+            let rotation = transform.rotation.to_axis_angle();
+            weapon.current_rotation = rotation.1;
         }
+    }
+}
+
+fn display_events(
+    mut collision_events: EventReader<CollisionEvent>,
+    mut contact_force_events: EventReader<ContactForceEvent>,
+) {
+    for collision_event in collision_events.read() {
+        println!("Received collision event: {:?}", collision_event);
+    }
+
+    for contact_force_event in contact_force_events.read() {
+        println!("Received contact force event: {:?}", contact_force_event);
     }
 }
 
 pub fn weapon_hit_enemy(
     mut commands: Commands,
-    mut enemy_query: Query<(Entity, &Transform, &mut HealthBar, &mut DamageTimer), With<Enemy>>,
-    weapon_query: Query<(&Weapon, &Transform), With<Weapon>>,
-    asset_server: Res<AssetServer>,
+    rapier_context: Res<RapierContext>,
+    q_weapon_sprite: Query<(Entity, &Collider, &Transform, &GlobalTransform), With<WeaponSprite>>,
+    q_damage: Query<&Weapon>,
+    mut q_enemies: Query<(&mut HealthBar, &mut DamageTimer), With<Enemy>>,
     time: Res<Time>,
     audio: Res<Audio>,
 ) {
-    for (enemy, enemy_transform, mut health_bar, mut damage_timer) in enemy_query.iter_mut() {
-        for (weapon, weapon_transform) in weapon_query.iter() {
-            let distance = weapon_transform
-                .translation
-                .distance(enemy_transform.translation);
+    let damage = q_damage.get_single().unwrap().damage;
+    let (weapon, collider, transform, g_transform) = q_weapon_sprite.get_single().unwrap();
 
-            damage_timer.0.tick(time.delta());
+    let filter = QueryFilter {
+        exclude_collider: Some(weapon),
+        ..default()
+    };
 
-            if damage_timer.0.elapsed_secs() >= 1.0 && distance < 60.0 {
-                println!("Distance: {}", distance);
-                health_bar.health -= weapon.damage;
+    rapier_context.intersections_with_shape(
+        g_transform.translation().truncate(),
+        transform.rotation.to_euler(EulerRot::ZYX).0,
+        collider,
+        filter,
+        |entity| {
+            if let Ok((mut health_bar, mut damage_timer)) = q_enemies.get_mut(entity) {
+                damage_timer.0.tick(time.delta());
 
-                damage_timer.0.reset();
-
-                println!("Enemy health: {}", health_bar.health);
-
-                if health_bar.health <= 0.0 {
-                    commands.entity(enemy).despawn_recursive();
-
-                    audio.play(asset_server.load("audio/explosionCrunch_000.ogg"));
+                if damage_timer.0.elapsed_secs() >= 0.2 {
+                    health_bar.health -= damage;
+                    damage_timer.0.reset();
                 }
             }
-        }
+            true
+        },
+    );
+}
+
+fn change_direction(mut query: Query<&mut Weapon>, input: Res<ButtonInput<KeyCode>>) {
+    let mut weapon = query.get_single_mut().unwrap();
+
+    if input.just_pressed(KeyCode::Space) {
+        weapon.rotation_direction = match weapon.rotation_direction {
+            RotationDirection::Clockwise => RotationDirection::CounterClockwise,
+            RotationDirection::CounterClockwise => RotationDirection::Clockwise,
+        };
     }
 }
