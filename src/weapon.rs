@@ -1,18 +1,24 @@
-use crate::{
-    health_bar::{self, HealthBar},
-    DamageTimer, Enemy,
-};
-use bevy::{
-    math::bounding::{Aabb2d, BoundingVolume, IntersectsVolume},
-    prelude::*,
-    render::primitives::Aabb,
-    transform::commands,
-};
-use bevy_kira_audio::prelude::*;
+use crate::{health_bar::HealthBar, DamageTimer, Enemy};
+use bevy::prelude::*;
 use bevy_rapier2d::prelude::*;
 
+pub const WEAPON_TICK_SECS: f32 = 0.5;
+
+#[derive(Resource)]
+pub struct WeaponTick {
+    pub timer: Timer,
+}
+
+impl Default for WeaponTick {
+    fn default() -> Self {
+        Self {
+            timer: Timer::from_seconds(WEAPON_TICK_SECS, TimerMode::Once),
+        }
+    }
+}
+
 #[derive(Default)]
-enum RotationDirection {
+pub enum RotationDirection {
     #[default]
     Clockwise,
     CounterClockwise,
@@ -36,6 +42,7 @@ pub struct WeaponPlugin;
 
 impl Plugin for WeaponPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<WeaponTick>();
         app.add_systems(PostStartup, spawn);
         app.add_systems(PreUpdate, change_direction);
         app.add_systems(Update, (orbit, display_events, weapon_hit_enemy));
@@ -62,8 +69,6 @@ fn spawn(mut commands: Commands, query: Query<(Entity, &Weapon), With<Weapon>>) 
             .insert(WeaponSprite)
             .insert(Collider::cuboid(4., 60.))
             .insert(Sensor)
-            .insert(RigidBody::Fixed)
-            .insert(ActiveEvents::COLLISION_EVENTS)
             .id();
 
         commands.entity(entity).push_children(&[children]);
@@ -108,13 +113,12 @@ fn display_events(
 }
 
 pub fn weapon_hit_enemy(
-    mut commands: Commands,
     rapier_context: Res<RapierContext>,
     q_weapon_sprite: Query<(Entity, &Collider, &Transform, &GlobalTransform), With<WeaponSprite>>,
     q_damage: Query<&Weapon>,
-    mut q_enemies: Query<(&mut HealthBar, &mut DamageTimer), With<Enemy>>,
+    mut q_enemies: Query<&mut HealthBar, With<Enemy>>,
     time: Res<Time>,
-    audio: Res<Audio>,
+    mut tick: ResMut<WeaponTick>,
 ) {
     let damage = q_damage.get_single().unwrap().damage;
     let (weapon, collider, transform, g_transform) = q_weapon_sprite.get_single().unwrap();
@@ -124,18 +128,18 @@ pub fn weapon_hit_enemy(
         ..default()
     };
 
+    tick.timer.tick(time.delta());
+
     rapier_context.intersections_with_shape(
         g_transform.translation().truncate(),
         transform.rotation.to_euler(EulerRot::ZYX).0,
         collider,
         filter,
         |entity| {
-            if let Ok((mut health_bar, mut damage_timer)) = q_enemies.get_mut(entity) {
-                damage_timer.0.tick(time.delta());
-
-                if damage_timer.0.elapsed_secs() >= 0.2 {
+            if let Ok(mut health_bar) = q_enemies.get_mut(entity) {
+                if tick.timer.finished() {
                     health_bar.health -= damage;
-                    damage_timer.0.reset();
+                    tick.timer.reset();
                 }
             }
             true

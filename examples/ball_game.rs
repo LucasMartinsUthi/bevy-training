@@ -112,9 +112,7 @@ pub fn spawn_enemy(
             })
             .insert(DamageTimer::default())
             .insert(Collider::ball(32.))
-            .insert(RigidBody::Fixed)
-            .insert(Sensor)
-            .insert(ActiveEvents::COLLISION_EVENTS);
+            .insert(Sensor);
     }
 }
 
