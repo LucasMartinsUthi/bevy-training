@@ -22,3 +22,18 @@ pub struct Game {
     pub player: Player,
     pub score: u32,
 }
+
+pub const ENEMY_HIT_TICK_SECS: f32 = 0.5;
+
+#[derive(Component)]
+pub struct EnemyHitTimer {
+    pub timer: Timer,
+}
+
+impl Default for EnemyHitTimer {
+    fn default() -> Self {
+        Self {
+            timer: Timer::from_seconds(ENEMY_HIT_TICK_SECS, TimerMode::Once),
+        }
+    }
+}

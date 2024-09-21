@@ -1,6 +1,4 @@
-use bevy::{asset::transformer, prelude::*};
-
-use crate::health_bar;
+use bevy::prelude::*;
 
 #[derive(Default, Component)]
 pub struct HealthBar {
@@ -15,12 +13,14 @@ pub struct HealthBarPlugin;
 
 impl Plugin for HealthBarPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PostStartup, spawn);
-        app.add_systems(Update, update_health_bar);
+        app.add_systems(PostUpdate, (spawn, update_health_bar));
     }
 }
 
-fn spawn(mut commands: Commands, query: Query<(Entity, &HealthBar), With<HealthBar>>) {
+fn spawn(
+    mut commands: Commands,
+    query: Query<(Entity, &HealthBar), (With<HealthBar>, Without<HealthBarSprite>)>,
+) {
     for (entity, health_bar) in query.iter() {
         let children = commands
             .spawn(SpriteBundle {
@@ -43,7 +43,7 @@ fn spawn(mut commands: Commands, query: Query<(Entity, &HealthBar), With<HealthB
 }
 
 fn update_health_bar(
-    mut commands: Commands,
+    // mut commands: Commands,
     mut query: Query<(&Parent, &mut Transform), With<HealthBarSprite>>,
     health_bar_query: Query<&HealthBar>,
 ) {

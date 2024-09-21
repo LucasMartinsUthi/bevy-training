@@ -1,21 +1,8 @@
-use crate::{health_bar::HealthBar, DamageTimer, Enemy};
+use crate::{health_bar::HealthBar, Enemy, EnemyHitTimer};
 use bevy::prelude::*;
+use bevy_kira_audio::prelude::*;
 use bevy_rapier2d::prelude::*;
-
-pub const WEAPON_TICK_SECS: f32 = 0.5;
-
-#[derive(Resource)]
-pub struct WeaponTick {
-    pub timer: Timer,
-}
-
-impl Default for WeaponTick {
-    fn default() -> Self {
-        Self {
-            timer: Timer::from_seconds(WEAPON_TICK_SECS, TimerMode::Once),
-        }
-    }
-}
+use rand::prelude::*;
 
 #[derive(Default)]
 pub enum RotationDirection {
@@ -42,7 +29,6 @@ pub struct WeaponPlugin;
 
 impl Plugin for WeaponPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<WeaponTick>();
         app.add_systems(PostStartup, spawn);
         app.add_systems(PreUpdate, change_direction);
         app.add_systems(Update, (orbit, display_events, weapon_hit_enemy));
@@ -116,44 +102,62 @@ pub fn weapon_hit_enemy(
     rapier_context: Res<RapierContext>,
     q_weapon_sprite: Query<(Entity, &Collider, &Transform, &GlobalTransform), With<WeaponSprite>>,
     q_damage: Query<&Weapon>,
-    mut q_enemies: Query<&mut HealthBar, With<Enemy>>,
+    mut q_enemies: Query<(&mut HealthBar, &mut EnemyHitTimer), With<Enemy>>,
     time: Res<Time>,
-    mut tick: ResMut<WeaponTick>,
+    asset_server: Res<AssetServer>,
+    audio: Res<Audio>,
 ) {
-    let damage = q_damage.get_single().unwrap().damage;
-    let (weapon, collider, transform, g_transform) = q_weapon_sprite.get_single().unwrap();
+    if let Ok(w_damage) = q_damage.get_single() {
+        let damage = w_damage.damage;
 
-    let filter = QueryFilter {
-        exclude_collider: Some(weapon),
-        ..default()
-    };
+        if let Ok((weapon, collider, transform, g_transform)) = q_weapon_sprite.get_single() {
+            let filter = QueryFilter {
+                exclude_collider: Some(weapon),
+                ..default()
+            };
 
-    tick.timer.tick(time.delta());
+            rapier_context.intersections_with_shape(
+                g_transform.translation().truncate(),
+                transform.rotation.to_euler(EulerRot::ZYX).0,
+                collider,
+                filter,
+                |entity| {
+                    if let Ok((mut health_bar, mut hit_timer)) = q_enemies.get_mut(entity) {
+                        if hit_timer.timer.finished() {
+                            health_bar.health -= damage;
 
-    rapier_context.intersections_with_shape(
-        g_transform.translation().truncate(),
-        transform.rotation.to_euler(EulerRot::ZYX).0,
-        collider,
-        filter,
-        |entity| {
-            if let Ok(mut health_bar) = q_enemies.get_mut(entity) {
-                if tick.timer.finished() {
-                    health_bar.health -= damage;
-                    tick.timer.reset();
-                }
-            }
-            true
-        },
-    );
+                            // let sound_handle = match random::<f32>() {
+                            //     x if x >= 0.0 && x < 0.5 => {
+                            //         asset_server.load("audio/impactMetal_001.ogg")
+                            //     }
+                            //     x if x >= 0.5 && x < 0.98 => {
+                            //         asset_server.load("audio/impactMetal_002.ogg")
+                            //     }
+                            //     x if x >= 0.98 && x <= 1.0 => {
+                            //         asset_server.load("audio/impactMetal_004.ogg")
+                            //     }
+                            //     _ => panic!("Value out of range"),
+                            // };
+
+                            // audio.play(sound_handle);
+
+                            hit_timer.timer.reset();
+                        }
+                    }
+                    true
+                },
+            );
+        }
+    }
 }
 
 fn change_direction(mut query: Query<&mut Weapon>, input: Res<ButtonInput<KeyCode>>) {
-    let mut weapon = query.get_single_mut().unwrap();
-
-    if input.just_pressed(KeyCode::Space) {
-        weapon.rotation_direction = match weapon.rotation_direction {
-            RotationDirection::Clockwise => RotationDirection::CounterClockwise,
-            RotationDirection::CounterClockwise => RotationDirection::Clockwise,
-        };
+    if let Ok(mut weapon) = query.get_single_mut() {
+        if input.just_pressed(KeyCode::Space) {
+            weapon.rotation_direction = match weapon.rotation_direction {
+                RotationDirection::Clockwise => RotationDirection::CounterClockwise,
+                RotationDirection::CounterClockwise => RotationDirection::Clockwise,
+            };
+        }
     }
 }

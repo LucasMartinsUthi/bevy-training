@@ -1,3 +1,8 @@
+use bevy::diagnostic::{
+    // AssetCountDiagnosticsPlugin,
+    // EntityCountDiagnisticsPlugin,
+    FrameTimeDiagnosticsPlugin,
+};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_editor_pls::prelude::*;
@@ -6,7 +11,7 @@ use bevy_rapier2d::prelude::*;
 use bevy_training::{
     health_bar::{HealthBar, HealthBarPlugin},
     weapon::{Weapon, WeaponPlugin},
-    DamageTimer, Enemy, Player,
+    DamageTimer, Enemy, EnemyHitTimer, Player,
 };
 use rand::prelude::*;
 
@@ -16,6 +21,20 @@ pub const PLAYER_SIZE: f32 = 64.0;
 pub const PLAYER_ENEMY: usize = 4;
 pub const ENEMY_SPEED: f32 = 200.0;
 pub const ENEMY_SIZE: f32 = 64.0;
+pub const ENEMY_SPAWN_TIMER: f32 = 0.1;
+
+#[derive(Resource)]
+pub struct EnemySpawnTimer {
+    pub timer: Timer,
+}
+
+impl Default for EnemySpawnTimer {
+    fn default() -> Self {
+        Self {
+            timer: Timer::from_seconds(ENEMY_SPAWN_TIMER, TimerMode::Repeating),
+        }
+    }
+}
 
 fn main() {
     App::new()
@@ -24,10 +43,14 @@ fn main() {
             AudioPlugin,
             RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0),
             RapierDebugRenderPlugin::default(),
+            FrameTimeDiagnosticsPlugin::default(),
+            // EntityCountDiagnisticsPlugin::default(),
+            // AssetCountDiagnosticsPlugin::default(),
         ))
         .add_plugins(EditorPlugin::default())
         .add_plugins(HealthBarPlugin)
         .add_plugins(WeaponPlugin)
+        .init_resource::<EnemySpawnTimer>()
         .add_systems(Startup, (spawn_player, spawn_camera, spawn_enemy))
         .add_systems(
             Update,
@@ -36,7 +59,9 @@ fn main() {
                 bound_player_movement,
                 enemy_movement,
                 bound_enemy_movement,
-                enemy_hit_player,
+                // enemy_hit_player,
+                tick_enemy_spawn_timer,
+                tick_enemy_hit_timer,
             ),
         )
         .add_systems(PostUpdate, despawn_enemys)
@@ -67,7 +92,7 @@ pub fn spawn_player(
         })
         .insert(DamageTimer::default())
         .insert(Weapon {
-            damage: 10.0,
+            damage: 200.0,
             rotation_speed: 5.0,
             ..Default::default()
         });
@@ -110,9 +135,9 @@ pub fn spawn_enemy(
                 max_health: 50.,
                 health: 50.,
             })
-            .insert(DamageTimer::default())
             .insert(Collider::ball(32.))
-            .insert(Sensor);
+            .insert(Sensor)
+            .insert(EnemyHitTimer::default());
     }
 }
 
@@ -218,16 +243,16 @@ pub fn bound_enemy_movement(
             direction_changed = true;
         }
 
-        if direction_changed {
-            let sound_handle = if random::<f32>() > 0.5 {
-                asset_server.load("audio/pluck_001.ogg")
-            } else {
-                asset_server.load("audio/pluck_002.ogg")
-            };
+        // if direction_changed {
+        //     let sound_handle = if random::<f32>() > 0.5 {
+        //         asset_server.load("audio/pluck_001.ogg")
+        //     } else {
+        //         asset_server.load("audio/pluck_002.ogg")
+        //     };
 
-            // Play the audio directly without spawning an entity
-            audio.play(sound_handle);
-        }
+        //     // Play the audio directly without spawning an entity
+        //     audio.play(sound_handle);
+        // }
     }
 }
 
@@ -257,10 +282,10 @@ pub fn enemy_hit_player(
 
                 if health_bar.health <= 0.0 {
                     commands.entity(player_entity).despawn_recursive();
-                    commands.spawn(AudioBundle {
-                        source: asset_server.load("audio/explosionCrunch_000.ogg"),
-                        ..default()
-                    });
+                    // commands.spawn(AudioBundle {
+                    //     source: asset_server.load("audio/explosionCrunch_000.ogg"),
+                    //     ..default()
+                    // });
                 }
             }
         }
@@ -276,7 +301,58 @@ fn despawn_enemys(
     for (entity, health_bar) in query.iter() {
         if health_bar.health <= 0.0 {
             commands.entity(entity).despawn_recursive();
-            audio.play(asset_server.load("audio/explosionCrunch_000.ogg"));
+
+            // let sound_handle = match random::<f32>() {
+            //     x if x >= 0.0 && x < 0.33 => asset_server.load("audio/explosionCrunch_000.ogg"),
+            //     x if x >= 0.33 && x < 0.66 => asset_server.load("audio/explosionCrunch_002.ogg"),
+            //     x if x >= 0.66 && x <= 1.0 => asset_server.load("audio/explosionCrunch_003.ogg"),
+            //     _ => panic!("Value out of range"),
+            // };
+
+            // audio.play(sound_handle).end_at(0.8).with_volume(0.5);
         }
+    }
+}
+
+fn tick_enemy_spawn_timer(
+    mut commands: Commands,
+    mut timer: ResMut<EnemySpawnTimer>,
+    time: Res<Time>,
+    window_query: Query<&Window, With<PrimaryWindow>>,
+    asset_server: Res<AssetServer>,
+) {
+    timer.timer.tick(time.delta());
+
+    if timer.timer.finished() {
+        let window = window_query.get_single().unwrap();
+
+        let rand_x = random::<f32>() * window.width();
+        let rand_y = random::<f32>() * window.height();
+
+        commands
+            .spawn(SpriteBundle {
+                transform: Transform::from_translation(Vec3::new(rand_x, rand_y, 0.0)),
+                texture: asset_server.load("sprites/ball_blue_large.png"),
+                ..Default::default()
+            })
+            .insert(Enemy {
+                direction: Vec2::new(random::<f32>() - 0.5, random::<f32>() - 0.5).normalize(),
+            })
+            .insert(HealthBar {
+                max_health: 50.,
+                health: 50.,
+            })
+            .insert(Collider::ball(32.))
+            .insert(Sensor)
+            .insert(EnemyHitTimer::default());
+    }
+}
+
+fn tick_enemy_hit_timer(
+    time: Res<Time>,
+    mut query: Query<&mut EnemyHitTimer>, // Query enemies with the timer
+) {
+    for mut enemy_hit_timer in query.iter_mut() {
+        enemy_hit_timer.timer.tick(time.delta());
     }
 }
